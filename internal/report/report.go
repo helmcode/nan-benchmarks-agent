@@ -6,6 +6,8 @@ package report
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/helmcode/nan-benchmarks-agent/internal/queries"
@@ -46,14 +48,16 @@ type Report struct {
 
 // PeriodMetrics holds everything for one window evaluated at one timestamp.
 type PeriodMetrics struct {
-	At         time.Time                   `json:"at"`
-	Traffic    *queries.Traffic            `json:"traffic"`
-	TTFT       *queries.Latency            `json:"ttft"`
-	TPOT       *queries.Latency            `json:"tpot"`
-	E2E        *queries.Latency            `json:"e2e"`
-	Cache      *queries.Cache              `json:"cache"`
-	Hardware   *queries.Hardware           `json:"hardware"`
-	Aggregates Aggregates                  `json:"aggregates"`
+	At         time.Time          `json:"at"`
+	Traffic    *queries.Traffic   `json:"traffic"`
+	TTFT       *queries.Latency   `json:"ttft"`
+	TPOT       *queries.Latency   `json:"tpot"`
+	E2E        *queries.Latency   `json:"e2e"`
+	Cache      *queries.Cache     `json:"cache"`
+	Hardware   *queries.Hardware  `json:"hardware"`
+	LiteLLM    *queries.LiteLLM   `json:"litellm,omitempty"`
+	Series     *queries.TimeSeries `json:"-"` // not in JSON — too large for the LLM prompt
+	Aggregates Aggregates         `json:"aggregates"`
 }
 
 // Aggregates are summary stats computed across the discovered topology.
@@ -103,6 +107,27 @@ func Build(ctx context.Context, c *vmclient.Client, mode Mode, now time.Time) (*
 		prev = &PeriodMetrics{At: prevAt}
 	}
 
+	// Time series are only collected for the current window — the previous
+	// window participates in the comparison table via instant aggregates.
+	// LiteLLM time series are NOT collected here: their histograms carry
+	// > 100k series and range queries exceed vmstorage's sample cap. The
+	// proxy section renders single-point percentiles via the instant
+	// CollectLiteLLM call inside buildPeriod.
+	step := queries.RecommendedStep(w)
+	start := now.Add(-time.Duration(secs) * time.Second)
+	qwenSel := qwenSelector(top)
+	if qwenSel != "" {
+		if series, serr := queries.CollectVllmSeries(ctx, c, qwenSel, start, now, step); serr == nil {
+			cur.Series = series
+			slog.Info("time series collected",
+				"req_points", len(series.ReqPerMinTotal),
+				"ttft_p50_points", len(series.TTFTp50),
+				"step", step.String())
+		} else {
+			slog.Warn("time series: vllm collection failed", "err", serr)
+		}
+	}
+
 	return &Report{
 		Mode:        mode,
 		Window:      string(w),
@@ -113,6 +138,52 @@ func Build(ctx context.Context, c *vmclient.Client, mode Mode, now time.Time) (*
 		Current:     cur,
 		Previous:    prev,
 	}, nil
+}
+
+// qwenSelector builds a PromQL label selector that matches every job in the
+// Qwen3.6 family. We anchor on the live model_name labels so the selector
+// stays accurate even after model renames; if no qwen backend is discovered
+// we return an empty string and skip time-series collection.
+func qwenSelector(top *topology.Topology) string {
+	models := map[string]struct{}{}
+	for _, n := range top.ByFamily(topology.FamilyQwen) {
+		if n.Model != "" {
+			models[n.Model] = struct{}{}
+		}
+	}
+	if len(models) == 0 {
+		return ""
+	}
+	// Build a regex alternation of the literal model_name values so the
+	// PromQL `model_name=~"..."` selector tracks whatever the cluster
+	// is actually serving today.
+	parts := make([]string, 0, len(models))
+	for m := range models {
+		parts = append(parts, regexpQuoteForPromQL(m))
+	}
+	return `model_name=~"` + strings.Join(parts, "|") + `"`
+}
+
+// regexpQuoteForPromQL escapes regex metacharacters so a literal
+// model_name string is matched verbatim by Prometheus's RE2 engine.
+//
+// The string we build here ends up double-escaped on purpose: PromQL
+// parses the double-quoted body of `=~"..."` as a Go-style string
+// literal first (where `\\` reduces to `\`) and then hands the result
+// to RE2. So to match a literal "." we need to emit `\\.` (two source
+// backslashes + dot), which PromQL string-decodes to `\.` and RE2
+// then reads as "literal dot".
+func regexpQuoteForPromQL(s string) string {
+	const meta = `\.+*?()|[]{}^$`
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if strings.ContainsRune(meta, r) {
+			b.WriteString(`\\`)
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 func buildPeriod(ctx context.Context, c *vmclient.Client, w queries.Window, at time.Time, top *topology.Topology) (*PeriodMetrics, error) {
@@ -140,6 +211,13 @@ func buildPeriod(ctx context.Context, c *vmclient.Client, w queries.Window, at t
 	if err != nil {
 		return nil, err
 	}
+	llm, err := queries.CollectLiteLLM(ctx, c, w, at)
+	if err != nil {
+		// LiteLLM metrics are best-effort — the proxy may not be scraped
+		// during a partial outage. Carry on rather than failing the whole
+		// report.
+		llm = &queries.LiteLLM{}
+	}
 
 	pm := &PeriodMetrics{
 		At:       at,
@@ -149,6 +227,7 @@ func buildPeriod(ctx context.Context, c *vmclient.Client, w queries.Window, at t
 		E2E:      e2e,
 		Cache:    cache,
 		Hardware: hw,
+		LiteLLM:  llm,
 	}
 	pm.Aggregates = aggregate(top, pm, w)
 	return pm, nil

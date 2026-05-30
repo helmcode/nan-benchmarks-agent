@@ -40,11 +40,24 @@ type vmResponse struct {
 		ResultType string `json:"resultType"`
 		Result     []struct {
 			Metric map[string]string `json:"metric"`
-			Value  [2]any            `json:"value"`
+			Value  [2]any             `json:"value"`  // instant only
+			Values [][2]any           `json:"values"` // range only
 		} `json:"result"`
 	} `json:"data"`
 	ErrorType string `json:"errorType,omitempty"`
 	Error     string `json:"error,omitempty"`
+}
+
+// Point is one (timestamp, value) pair in a range query response.
+type Point struct {
+	T time.Time
+	V float64
+}
+
+// Series is one labelled stream of points returned by a range query.
+type Series struct {
+	Metric map[string]string
+	Points []Point
 }
 
 // Instant runs a PromQL query at a single timestamp. `at` is the eval moment;
@@ -91,6 +104,69 @@ func (c *Client) Instant(ctx context.Context, query string, at time.Time) ([]Sam
 			continue
 		}
 		out = append(out, Sample{Metric: s.Metric, Value: f})
+	}
+	return out, nil
+}
+
+// Range runs a PromQL query over a time window, returning one Series per
+// label combination. `step` is the resolution; pick it based on the window
+// (eg. 1h for 7d windows, 6h for 30d windows) so the result stays under a
+// few hundred points per series — Chart.js renders that cleanly and the
+// payload stays small.
+func (c *Client) Range(ctx context.Context, query string, start, end time.Time, step time.Duration) ([]Series, error) {
+	u := fmt.Sprintf("%s/select/0/prometheus/api/v1/query_range", c.BaseURL)
+	v := url.Values{
+		"query": []string{query},
+		"start": []string{fmt.Sprintf("%d", start.Unix())},
+		"end":   []string{fmt.Sprintf("%d", end.Unix())},
+		"step":  []string{fmt.Sprintf("%ds", int(step.Seconds()))},
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u+"?"+v.Encode(), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("vm range: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("vm range: status %d: %s", resp.StatusCode, body)
+	}
+
+	var r vmResponse
+	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
+		return nil, fmt.Errorf("vm range decode: %w", err)
+	}
+	if r.Status != "success" {
+		return nil, fmt.Errorf("vm range failed (%s): %s", r.ErrorType, r.Error)
+	}
+
+	out := make([]Series, 0, len(r.Data.Result))
+	for _, s := range r.Data.Result {
+		series := Series{Metric: s.Metric, Points: make([]Point, 0, len(s.Values))}
+		for _, pair := range s.Values {
+			ts, ok := pair[0].(float64)
+			if !ok {
+				continue
+			}
+			raw, ok := pair[1].(string)
+			if !ok {
+				continue
+			}
+			val, err := parseFloat(raw)
+			if err != nil {
+				continue
+			}
+			series.Points = append(series.Points, Point{
+				T: time.Unix(int64(ts), 0).UTC(),
+				V: val,
+			})
+		}
+		out = append(out, series)
 	}
 	return out, nil
 }

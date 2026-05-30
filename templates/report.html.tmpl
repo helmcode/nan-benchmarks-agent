@@ -1,13 +1,10 @@
 <!doctype html>
-<html lang="en">
+<html lang="es">
 <head>
 <meta charset="utf-8">
 <title>{{ .Title }}</title>
 <style>
-  /* ── Page setup ──
-     The @page margin is set to 0 so Chromium does NOT leave a white frame
-     around our dark body background when printing to PDF. Inner padding
-     lives on `.page` instead, so each page in the PDF is fully tinted.       */
+  /* ── Page setup ── */
   @page { size: A4; margin: 0; }
   * { box-sizing: border-box; }
   html, body {
@@ -21,12 +18,6 @@
     margin: 0; padding: 0;
   }
   code, pre, .mono, table { font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace; }
-
-  /* ── Layout ──
-     `.page` is one printed sheet. We give it the page's full A4 height so
-     the dark background extends to the bottom edge even when the section
-     content is short, and put the visual margin as padding instead of
-     @page margin.                                                            */
   .page {
     padding: 1.4cm 1.6cm;
     min-height: 29.7cm;
@@ -44,25 +35,30 @@
   /* ── Headings ── */
   h2 { font-size: 13pt; color: #fff; margin: 18pt 0 8pt; border-bottom: 1px solid #2a2a35; padding-bottom: 4pt; }
   h3 { font-size: 11pt; color: #c9c9d6; margin: 14pt 0 6pt; }
+  h2:first-of-type, h3:first-of-type { margin-top: 0; }
 
   /* ── Tables ── */
   table { width: 100%; border-collapse: collapse; font-size: 8.5pt; margin: 8pt 0 12pt; }
   th, td { padding: 5pt 8pt; text-align: left; border-bottom: 1px solid #1f1f29; }
   th { color: #b095ff; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; font-size: 7.5pt; background: #14141c; }
-  tr:hover td { background: #11111a; }
   td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
   tr.sum td { background: #14141c; font-weight: 600; color: #fff; }
 
-  /* ── Inline bar (CSS sparkline) ── */
-  .bar { display: inline-block; height: 6pt; background: #b095ff; border-radius: 1pt; vertical-align: middle; margin-right: 4pt; }
-  .bar.warn { background: #ffaf60; }
-  .bar.bad { background: #ff5d6c; }
+  /* ── Metric cards ── */
+  .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8pt; margin: 6pt 0 14pt; }
+  .card { border: 1px solid #1f1f29; background: #11111a; padding: 8pt 10pt; border-radius: 3pt; }
+  .card .label { color: #8a8aa0; font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.05em; }
+  .card .value { color: #fff; font-size: 14pt; font-weight: 600; margin-top: 2pt; font-variant-numeric: tabular-nums; }
+  .card .sub   { color: #c9c9d6; font-size: 8.5pt; margin-top: 1pt; }
 
-  /* ── Markdown rendering (LLM output is dropped into .md) ──
-     The LLM emits its Capacity Planning block as a GFM table, plus the usual
-     mix of headings, paragraphs, bullets, bold and inline code. These rules
-     style each of those primitives so the analysis page reads cleanly in the
-     final PDF.                                                              */
+  /* ── Charts ── */
+  .chart-wrap { background: #11111a; border: 1px solid #1f1f29; border-radius: 3pt; padding: 8pt; margin: 6pt 0 12pt; }
+  .chart-wrap .chart-title { font-size: 9pt; color: #c9c9d6; margin-bottom: 4pt; text-transform: uppercase; letter-spacing: 0.05em; }
+  .chart-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8pt; }
+  canvas { width: 100% !important; height: 110pt !important; }
+  .chart-tall canvas { height: 150pt !important; }
+
+  /* ── Markdown (LLM output) ── */
   .md { font-size: 10pt; line-height: 1.65; }
   .md h2 { margin-top: 18pt; margin-bottom: 8pt; }
   .md h3 { margin-top: 14pt; margin-bottom: 6pt; font-size: 10.5pt; }
@@ -72,41 +68,18 @@
   .md li > p { margin: 2pt 0; }
   .md strong { color: #fff; }
   .md code { background: #1a1a24; padding: 1pt 4pt; border-radius: 2pt; font-size: 9pt; color: #b095ff; }
-  /* Tables inside the LLM narrative: same dark palette as the data tables
-     below, slightly looser so prose-driven tables breathe a bit more.       */
-  .md table {
-    width: 100%; border-collapse: collapse;
-    font-size: 9pt; margin: 10pt 0 14pt;
-    border: 1px solid #1f1f29;
-    line-height: 1.45;
-  }
-  .md th, .md td {
-    padding: 6pt 10pt;
-    border-bottom: 1px solid #1f1f29;
-    border-right: 1px solid #1f1f29;
-    text-align: left; vertical-align: top;
-  }
-  .md th {
-    color: #b095ff; font-weight: 600;
-    background: #14141c;
-    text-transform: none; letter-spacing: 0; font-size: 8.5pt;
-  }
+  .md table { width: 100%; border-collapse: collapse; font-size: 9pt; margin: 10pt 0 14pt; border: 1px solid #1f1f29; line-height: 1.45; }
+  .md th, .md td { padding: 6pt 10pt; border-bottom: 1px solid #1f1f29; border-right: 1px solid #1f1f29; text-align: left; vertical-align: top; }
+  .md th { color: #b095ff; font-weight: 600; background: #14141c; text-transform: none; letter-spacing: 0; font-size: 8.5pt; }
   .md th:last-child, .md td:last-child { border-right: none; }
   .md tr:last-child td { border-bottom: none; }
-  /* Right-align cells that look numeric (markdown alignment cues are lost in
-     goldmark's default renderer, so we lean on tabular-nums + class-less
-     numeric heuristics — the eye gets a clean column even without :is()).   */
   .md td { font-variant-numeric: tabular-nums; }
-  .md hr {
-    border: 0; border-top: 1px solid #2a2a35; margin: 8pt 0;
-  }
+  .md hr { border: 0; border-top: 1px solid #2a2a35; margin: 8pt 0; }
 
-  /* ── Deltas ── */
+  /* ── Deltas & badges ── */
   .delta-good { color: #5ad97a; }
   .delta-bad  { color: #ff7e85; }
   .delta-flat { color: #8a8aa0; }
-
-  /* ── Footer ── */
   .footer { font-size: 7.5pt; color: #5a5a70; border-top: 1px solid #1f1f29; padding-top: 4pt; margin-top: 8pt; }
   .badge { display: inline-block; padding: 1pt 5pt; border: 1px solid #2a2a35; border-radius: 3pt; font-size: 7.5pt; color: #c9c9d6; margin-right: 4pt; }
   .badge.qwen { color: #b095ff; border-color: #5a4880; }
@@ -116,7 +89,7 @@
 </head>
 <body>
 
-<!-- ───────────── Page 1 — Cover + Analysis ───────────── -->
+<!-- ═════════════════ Page 1 — Cover + Analysis ═════════════════ -->
 <section class="page">
   <div class="cover-header">
     <h1>Cluster NaN — <span class="accent">Informe de rendimiento</span></h1>
@@ -127,7 +100,7 @@
     </div>
   </div>
 
-  <div style="display:flex; gap:8pt; margin-bottom:10pt;">
+  <div style="display:flex; gap:8pt; margin-bottom:10pt; flex-wrap:wrap;">
     <span class="badge qwen">{{ .QwenCount }} × qwen3.6</span>
     {{- if gt .GemmaCount 0 }}<span class="badge gemma">{{ .GemmaCount }} × gemma4</span>{{ end }}
     {{- if gt .EmbCount 0 }}<span class="badge embed">{{ .EmbCount }} × embedding</span>{{ end }}
@@ -141,13 +114,47 @@
   </div>
 
   <div class="footer">
-    nan-benchmarks-agent v{{ .AgentVersion }} • narrativa automatizada generada por el modelo {{ .Model }}.
+    nan-benchmarks-agent v{{ .AgentVersion }} • narrativa generada por el modelo {{ .Model }}.
     Los números proceden directamente de VictoriaMetrics; la interpretación la genera el LLM y debe revisarse.
   </div>
 </section>
 
-<!-- ───────────── Page 2 — Topology ───────────── -->
+<!-- ═════════════════ Page 2 — Topología + Resumen ejecutivo ═════════════════ -->
 <section class="page">
+  <h2>Resumen ejecutivo</h2>
+  <div class="cards">
+    <div class="card">
+      <div class="label">Solicitudes qwen3.6</div>
+      <div class="value">{{ humanInt .Current.Aggregates.QwenReqTotal }}</div>
+      <div class="sub">{{ printf "%.0f req/min" .Current.Aggregates.QwenReqPerMin }}</div>
+    </div>
+    <div class="card">
+      <div class="label">Tokens prompt / generación</div>
+      <div class="value">{{ humanInt .Current.Aggregates.QwenPromptTokens }}</div>
+      <div class="sub">{{ humanInt .Current.Aggregates.QwenGenTokens }} generados ({{ printf "%.0fx" (divFloat .Current.Aggregates.QwenPromptTokens .Current.Aggregates.QwenGenTokens) }} ratio)</div>
+    </div>
+    <div class="card">
+      <div class="label">Latencia (qwen3.6 fleet)</div>
+      <div class="value">{{ printf "%.2fs" .Current.Aggregates.QwenE2EP50Avg }}</div>
+      <div class="sub">E2E p50 · TTFT p50 {{ printf "%.2fs" .Current.Aggregates.QwenTTFTP50Avg }}</div>
+    </div>
+    <div class="card">
+      <div class="label">GPU util medio</div>
+      <div class="value">{{ printf "%.0f%%" .Current.Aggregates.QwenGPUUtilAvg }}</div>
+      <div class="sub">power-cap {{ printf "%.1f%%" .Current.Aggregates.QwenPwrCapAvg }} del tiempo</div>
+    </div>
+    <div class="card">
+      <div class="label">Prefix cache hit</div>
+      <div class="value">{{ printf "%.1f%%" .Current.Aggregates.QwenHitRateAvg }}</div>
+      <div class="sub">KV cache medio {{ printf "%.2f%%" .Current.Aggregates.QwenKVAvg }}</div>
+    </div>
+    <div class="card">
+      <div class="label">Preemptions</div>
+      <div class="value">{{ printf "%.0f" .Current.Aggregates.PreemptionsTotal }}</div>
+      <div class="sub">total flota qwen3.6</div>
+    </div>
+  </div>
+
   <h2>Topología del cluster</h2>
   <table>
     <thead><tr>
@@ -167,11 +174,16 @@
   </table>
 </section>
 
-<!-- ───────────── Page 3 — Traffic ───────────── -->
+<!-- ═════════════════ Page 3 — Tráfico y tokens ═════════════════ -->
 <section class="page">
   <h2>Volumen de tráfico — ventana actual ({{ .Window }})</h2>
 
-  <h3>Flota Qwen3.6</h3>
+  <div class="chart-wrap chart-tall">
+    <div class="chart-title">Solicitudes por minuto en el cluster (rolling)</div>
+    <canvas id="chReqPerMin"></canvas>
+  </div>
+
+  <h3>Flota Qwen3.6 — totales por nodo</h3>
   <table>
     <thead><tr>
       <th>Host</th>
@@ -235,100 +247,76 @@
     </tbody>
   </table>
   {{- end }}
-
-  <h3>Tokens procesados (suma flota qwen3.6)</h3>
-  <table>
-    <thead><tr><th>Tipo</th><th class="num">Tokens</th><th class="num">promedio / req</th></tr></thead>
-    <tbody>
-      <tr>
-        <td>Prompt</td>
-        <td class="num">{{ humanInt .Current.Aggregates.QwenPromptTokens }}</td>
-        <td class="num">{{ humanInt (divFloat .Current.Aggregates.QwenPromptTokens .Current.Aggregates.QwenReqTotal) }}</td>
-      </tr>
-      <tr>
-        <td>Generación</td>
-        <td class="num">{{ humanInt .Current.Aggregates.QwenGenTokens }}</td>
-        <td class="num">{{ humanInt (divFloat .Current.Aggregates.QwenGenTokens .Current.Aggregates.QwenReqTotal) }}</td>
-      </tr>
-    </tbody>
-  </table>
 </section>
 
-<!-- ───────────── Page 4 — Latency ───────────── -->
+<!-- ═════════════════ Page 4 — Latencias en el tiempo ═════════════════ -->
 <section class="page">
-  <h2>Percentiles de latencia</h2>
+  <h2>Latencias en el tiempo — flota Qwen3.6</h2>
 
-  <h3>Time to first token (TTFT)</h3>
-  <table>
-    <thead><tr><th>Host</th><th class="num">p50</th><th class="num">p95</th><th class="num">p99</th></tr></thead>
-    <tbody>
-    {{- range .AllVllmNodes }}
-      <tr>
-        <td>{{ .Hostname }}</td>
-        <td class="num">{{ printf "%.2fs" (index $.Current.TTFT.P50 .Job) }}</td>
-        <td class="num">{{ printf "%.2fs" (index $.Current.TTFT.P95 .Job) }}</td>
-        <td class="num">{{ printf "%.2fs" (index $.Current.TTFT.P99 .Job) }}</td>
-      </tr>
-    {{- end }}
-    </tbody>
-  </table>
+  <div class="chart-row">
+    <div class="chart-wrap">
+      <div class="chart-title">TTFT (p50 / p95 / p99) — segundos</div>
+      <canvas id="chTTFT"></canvas>
+    </div>
+    <div class="chart-wrap">
+      <div class="chart-title">TPOT (p50 / p95) — milisegundos por token</div>
+      <canvas id="chTPOT"></canvas>
+    </div>
+  </div>
 
-  <h3>Time per output token (TPOT)</h3>
-  <table>
-    <thead><tr><th>Host</th><th class="num">p50</th><th class="num">p95</th><th class="num">p99</th></tr></thead>
-    <tbody>
-    {{- range .GenerationNodes }}
-      <tr>
-        <td>{{ .Hostname }}</td>
-        <td class="num">{{ tpotMs (index $.Current.TPOT.P50 .Job) }}</td>
-        <td class="num">{{ tpotMs (index $.Current.TPOT.P95 .Job) }}</td>
-        <td class="num">{{ tpotMs (index $.Current.TPOT.P99 .Job) }}</td>
-      </tr>
-    {{- end }}
-    </tbody>
-  </table>
+  <div class="chart-row">
+    <div class="chart-wrap">
+      <div class="chart-title">E2E (p50 / p95) — segundos</div>
+      <canvas id="chE2E"></canvas>
+    </div>
+    <div class="chart-wrap">
+      <div class="chart-title">Prefix cache hit rate — %</div>
+      <canvas id="chPrefix"></canvas>
+    </div>
+  </div>
 
-  <h3>End-to-end (E2E)</h3>
-  <table>
-    <thead><tr><th>Host</th><th class="num">p50</th><th class="num">p95</th><th class="num">p99</th></tr></thead>
-    <tbody>
-    {{- range .GenerationNodes }}
-      <tr>
-        <td>{{ .Hostname }}</td>
-        <td class="num">{{ printf "%.2fs" (index $.Current.E2E.P50 .Job) }}</td>
-        <td class="num">{{ printf "%.2fs" (index $.Current.E2E.P95 .Job) }}</td>
-        <td class="num">{{ printf "%.2fs" (index $.Current.E2E.P99 .Job) }}</td>
-      </tr>
-    {{- end }}
-    </tbody>
-  </table>
-</section>
-
-<!-- ───────────── Page 5 — Cache & KV + Hardware ───────────── -->
-<section class="page">
-  <h2>Caché &amp; KV</h2>
+  <h3>Latencias por nodo (snapshot fin de ventana)</h3>
   <table>
     <thead><tr>
       <th>Host</th>
-      <th class="num">Prefix hit %</th>
-      <th class="num">KV avg %</th>
-      <th class="num">KV max %</th>
-      <th class="num">Preemptions</th>
+      <th class="num">TTFT p50/p95</th>
+      <th class="num">TPOT p50/p95</th>
+      <th class="num">E2E p50/p95</th>
     </tr></thead>
     <tbody>
     {{- range .GenerationNodes }}
       <tr>
         <td>{{ .Hostname }}</td>
-        <td class="num">{{ printf "%.1f%%" (index $.Current.Cache.HitRate .Job) }}</td>
-        <td class="num">{{ printf "%.1f%%" (index $.Current.Cache.KVAvg .Job) }}</td>
-        <td class="num">{{ printf "%.1f%%" (index $.Current.Cache.KVMax .Job) }}</td>
-        <td class="num">{{ printf "%.0f" (index $.Current.Traffic.Preemptions .Job) }}</td>
+        <td class="num">{{ printf "%.2fs / %.2fs" (index $.Current.TTFT.P50 .Job) (index $.Current.TTFT.P95 .Job) }}</td>
+        <td class="num">{{ tpotMs (index $.Current.TPOT.P50 .Job) }} / {{ tpotMs (index $.Current.TPOT.P95 .Job) }}</td>
+        <td class="num">{{ printf "%.2fs / %.2fs" (index $.Current.E2E.P50 .Job) (index $.Current.E2E.P95 .Job) }}</td>
       </tr>
     {{- end }}
     </tbody>
   </table>
+</section>
 
-  <h2>Hardware</h2>
+<!-- ═════════════════ Page 5 — Caché, KV y hardware ═════════════════ -->
+<section class="page">
+  <h2>Caché y KV — flota Qwen3.6</h2>
+
+  <div class="chart-row">
+    <div class="chart-wrap">
+      <div class="chart-title">KV cache usage medio — %</div>
+      <canvas id="chKV"></canvas>
+    </div>
+    <div class="chart-wrap">
+      <div class="chart-title">GPU utilization media — %</div>
+      <canvas id="chGPU"></canvas>
+    </div>
+  </div>
+
+  <div class="chart-wrap">
+    <div class="chart-title">SW power-cap throttle — % del tiempo</div>
+    <canvas id="chPwrCap"></canvas>
+  </div>
+
+  <h3>Hardware por nodo (snapshot fin de ventana)</h3>
   <table>
     <thead><tr>
       <th>Host</th>
@@ -336,7 +324,7 @@
       <th class="num">Temp media / máx</th>
       <th class="num">Potencia media / máx</th>
       <th class="num">VRAM</th>
-      <th class="num">SW pwr-cap %</th>
+      <th class="num">pwr-cap %</th>
     </tr></thead>
     <tbody>
     {{- range .AllVllmNodes }}
@@ -353,7 +341,116 @@
   </table>
 </section>
 
-<!-- ───────────── Page 6 — Comparison vs previous window ───────────── -->
+{{ if .HasLiteLLM }}
+<!-- ═════════════════ Page 6 — LiteLLM proxy ═════════════════ -->
+<section class="page">
+  <h2>Proxy LiteLLM</h2>
+
+  <div class="cards">
+    <div class="card">
+      <div class="label">Solicitudes con éxito</div>
+      <div class="value">{{ humanInt .LiteLLM.SuccessRequests }}</div>
+      <div class="sub">{{ humanInt .LiteLLM.FailureRequests }} con fallo</div>
+    </div>
+    <div class="card">
+      <div class="label">Fallbacks que salvaron</div>
+      <div class="value">{{ humanInt .LiteLLM.SuccessfulFallbacks }}</div>
+      <div class="sub">{{ humanInt .LiteLLM.FailedFallbacks }} fallaron · {{ humanInt .LiteLLM.CooledDownDeployments }} cooldowns</div>
+    </div>
+    <div class="card">
+      <div class="label">Cache hit rate</div>
+      <div class="value">{{ printf "%.1f%%" .LiteLLMCacheHitPct }}</div>
+      <div class="sub">{{ humanInt .LiteLLM.CachedTokens }} tokens servidos por caché</div>
+    </div>
+    <div class="card">
+      <div class="label">Overhead del proxy (p50 / p95)</div>
+      <div class="value">{{ printf "%.0fms" (mul .LiteLLM.OverheadP50Sec 1000.0) }}</div>
+      <div class="sub">{{ printf "p95 %.0fms" (mul .LiteLLM.OverheadP95Sec 1000.0) }}</div>
+    </div>
+    <div class="card">
+      <div class="label">Latencia LLM API (p50 / p95)</div>
+      <div class="value">{{ printf "%.2fs" .LiteLLM.ApiLatP50Sec }}</div>
+      <div class="sub">{{ printf "p95 %.2fs" .LiteLLM.ApiLatP95Sec }}</div>
+    </div>
+    <div class="card">
+      <div class="label">Overhead vs API latency</div>
+      <div class="value">{{ printf "%.1f%%" (pctOf .LiteLLM.OverheadP50Sec .LiteLLM.ApiLatP50Sec) }}</div>
+      <div class="sub">p50 ratio (proxy add-on vs upstream)</div>
+    </div>
+  </div>
+
+  {{ if .FallbackRows }}
+  <h3>Fallbacks y cooldowns por deployment</h3>
+  <table>
+    <thead><tr>
+      <th>Deployment</th>
+      <th class="num">Fallbacks que salvaron</th>
+      <th class="num">Cooldowns</th>
+    </tr></thead>
+    <tbody>
+    {{- range .FallbackRows }}
+      <tr>
+        <td>{{ .Deployment }}</td>
+        <td class="num">{{ .Fallbacks }}</td>
+        <td class="num">{{ .Cooldowns }}</td>
+      </tr>
+    {{- end }}
+    </tbody>
+  </table>
+  {{ end }}
+</section>
+
+{{ if .HasProviders }}
+<!-- ═════════════════ Page 7 — Proveedores externos ═════════════════ -->
+<section class="page">
+  <h2>Proveedores externos</h2>
+  <p style="font-size:9pt;color:#8a8aa0;margin:0 0 8pt;">
+    Reparto por backend de cada modelo que usa proveedores SaaS. Excluye los
+    backends in-house vLLM (api_provider = openai). Los proveedores con más
+    latencia p95 y mayor tasa de error aparecen marcados.
+  </p>
+
+  <div class="chart-wrap chart-tall">
+    <div class="chart-title">Tráfico por proveedor — req/min</div>
+    <canvas id="chProviders"></canvas>
+  </div>
+
+  <h3>Comparativa por proveedor</h3>
+  <table>
+    <thead><tr>
+      <th>Provider</th>
+      <th>Modelo</th>
+      <th class="num">Solicitudes</th>
+      <th class="num">Error %</th>
+      <th class="num">Input tok</th>
+      <th class="num">Output tok</th>
+      <th class="num">Cached tok</th>
+      <th class="num">Lat p50 / p95</th>
+    </tr></thead>
+    <tbody>
+    {{- range .ProviderRows }}
+      <tr>
+        <td>
+          {{ .Provider }}
+          {{- if .IsErrorest }} <span class="badge" style="color:#ff7e85;border-color:#80383d;">peor errores</span>{{ end }}
+          {{- if .IsSlowest }} <span class="badge" style="color:#ffaf60;border-color:#80623a;">peor p95</span>{{ end }}
+        </td>
+        <td><code>{{ .Model }}</code></td>
+        <td class="num">{{ .Requests }}</td>
+        <td class="num {{ .ErrorClass }}">{{ .ErrorRate }}</td>
+        <td class="num">{{ .InputTok }}</td>
+        <td class="num">{{ .OutputTok }}</td>
+        <td class="num">{{ .CachedTok }}</td>
+        <td class="num">{{ .LatencyP50 }} / {{ .LatencyP95 }}</td>
+      </tr>
+    {{- end }}
+    </tbody>
+  </table>
+</section>
+{{ end }}
+{{ end }}
+
+<!-- ═════════════════ Page 7 — Comparación vs ventana anterior ═════════════════ -->
 {{ if .HasComparison }}
 <section class="page">
   <h2>vs ventana anterior ({{ .Window }} finalizada {{ .PrevEndPretty }})</h2>
@@ -382,6 +479,166 @@
   </div>
 </section>
 {{ end }}
+
+<!-- ═════════════════ Chart.js + chart-init ═════════════════ -->
+<script>{{ .ChartJS }}</script>
+<script>
+(function () {
+  // Dataset payload marshalled by Go.
+  const D = {{ .ChartData }};
+
+  // Theme: dark canvas, purple/orange/cyan accents to match the palette.
+  const COLOR_PURPLE = '#b095ff';
+  const COLOR_ORANGE = '#ffaf60';
+  const COLOR_CYAN   = '#5ad9d9';
+  const COLOR_RED    = '#ff7e85';
+  const COLOR_GREEN  = '#5ad97a';
+  const TEXT = '#c9c9d6';
+  const GRID = '#1f1f29';
+
+  Chart.defaults.color = TEXT;
+  Chart.defaults.borderColor = GRID;
+  Chart.defaults.font.family = 'system-ui, -apple-system, sans-serif';
+  Chart.defaults.font.size = 9;
+  Chart.defaults.animation = false;
+  Chart.defaults.responsive = true;
+  Chart.defaults.maintainAspectRatio = false;
+
+  function lineDataset(label, series, color) {
+    return {
+      label: label,
+      data: series && series.data ? series.data : [],
+      borderColor: color,
+      backgroundColor: color + '22',
+      borderWidth: 1.4,
+      pointRadius: 0,
+      tension: 0.25,
+      fill: false,
+    };
+  }
+
+  function makeLineChart(canvasId, datasets, labels, yLabel) {
+    const el = document.getElementById(canvasId);
+    if (!el) return;
+    return new Chart(el, {
+      type: 'line',
+      data: { labels: labels || [], datasets: datasets },
+      options: {
+        plugins: {
+          legend: { labels: { color: TEXT, boxWidth: 8, boxHeight: 8, font: { size: 9 } } },
+          tooltip: { enabled: false },
+        },
+        scales: {
+          x: {
+            ticks: { color: TEXT, maxRotation: 0, autoSkip: true, maxTicksLimit: 6 },
+            grid: { color: GRID, drawTicks: false },
+          },
+          y: {
+            ticks: { color: TEXT },
+            grid: { color: GRID },
+            title: yLabel ? { display: true, text: yLabel, color: TEXT, font: { size: 8 } } : undefined,
+          },
+        },
+      },
+    });
+  }
+
+  // Pick X labels from whichever series has them (they all share the same
+  // timeline because we ask VictoriaMetrics for the same window+step).
+  const sharedLabels = (D.reqPerMin && D.reqPerMin.labels) || (D.ttftP50 && D.ttftP50.labels) || [];
+
+  // Cluster req/min (single line, purple).
+  makeLineChart('chReqPerMin',
+    [lineDataset('req/min', D.reqPerMin, COLOR_PURPLE)],
+    sharedLabels);
+
+  // TTFT — three percentiles on one chart.
+  makeLineChart('chTTFT',
+    [
+      lineDataset('p50', D.ttftP50, COLOR_PURPLE),
+      lineDataset('p95', D.ttftP95, COLOR_ORANGE),
+      lineDataset('p99', D.ttftP99, COLOR_RED),
+    ],
+    sharedLabels);
+
+  // TPOT — p50 + p95 (ms).
+  makeLineChart('chTPOT',
+    [
+      lineDataset('p50', D.tpotP50, COLOR_PURPLE),
+      lineDataset('p95', D.tpotP95, COLOR_ORANGE),
+    ],
+    sharedLabels);
+
+  // E2E — p50 + p95.
+  makeLineChart('chE2E',
+    [
+      lineDataset('p50', D.e2eP50, COLOR_PURPLE),
+      lineDataset('p95', D.e2eP95, COLOR_ORANGE),
+    ],
+    sharedLabels);
+
+  // Prefix hit %.
+  makeLineChart('chPrefix',
+    [lineDataset('prefix hit %', D.prefixHitPct, COLOR_GREEN)],
+    sharedLabels);
+
+  // KV cache %.
+  makeLineChart('chKV',
+    [lineDataset('KV cache %', D.kvAvgPct, COLOR_CYAN)],
+    sharedLabels);
+
+  // GPU util %.
+  makeLineChart('chGPU',
+    [lineDataset('GPU util %', D.gpuUtilPct, COLOR_PURPLE)],
+    sharedLabels);
+
+  // SW power-cap %.
+  makeLineChart('chPwrCap',
+    [lineDataset('pwr-cap %', D.pwrCapPct, COLOR_RED)],
+    sharedLabels);
+
+  // LiteLLM proxy histograms (overhead / api-latency) are cards-only because
+  // their bucket series count > 100k; per-provider counters by contrast are
+  // < 20 series and we DO render them as a multi-line chart.
+  {{ if .HasProviders }}
+  (function () {
+    const labels = {{ .ProviderChartLabels }};
+    const series = {{ .ProviderSeriesJSON }};
+    const el = document.getElementById('chProviders');
+    if (!el || !labels || !series) return;
+    new Chart(el, {
+      type: 'line',
+      data: {
+        labels: labels,
+        datasets: series.map(function (s) {
+          return {
+            label: s.Label,
+            data: s.Data,
+            borderColor: s.Color,
+            backgroundColor: s.Color + '22',
+            borderWidth: 1.4,
+            pointRadius: 0,
+            tension: 0.25,
+            fill: false,
+          };
+        }),
+      },
+      options: {
+        plugins: { legend: { labels: { color: TEXT, boxWidth: 8, boxHeight: 8, font: { size: 9 } } } },
+        scales: {
+          x: { ticks: { color: TEXT, maxRotation: 0, autoSkip: true, maxTicksLimit: 6 }, grid: { color: GRID } },
+          y: { ticks: { color: TEXT }, grid: { color: GRID } },
+        },
+      },
+    });
+  })();
+  {{ end }}
+
+  // Signal to chromedp that Chart.js has painted every canvas. The render
+  // pipeline polls window.__chartsReady before invoking PrintToPDF.
+  window.__chartsReady = true;
+})();
+</script>
 
 </body>
 </html>
