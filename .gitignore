@@ -1,4 +1,6 @@
-bench-agent
+# Local build artefacts. Leading slash anchors to the repo root so we don't
+# accidentally ignore the cmd/bench-agent/ source directory.
+/bench-agent
 *.pdf
 *.html
 /tmp/
