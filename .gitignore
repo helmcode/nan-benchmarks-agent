@@ -1,0 +1,6 @@
+bench-agent
+*.pdf
+*.html
+/tmp/
+.env
+.DS_Store

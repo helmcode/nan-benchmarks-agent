@@ -1,0 +1,150 @@
+# Deploy pipeline for helmcode/nan-benchmarks-agent.
+#
+# Flow on push to main:
+#   1. check       — detect if VERSION changed (gates the version-tag push).
+#   2. test        — go test ./...
+#   3. build-push  — build image, push to GHCR. Always tagged with the commit
+#                    sha; if VERSION changed also tagged with `latest` and
+#                    `v<version>`. Outputs `image_tag` (the canonical tag the
+#                    bump job writes into nan-devops).
+#   4. bump-values — checkout helmcode/nan-devops, rewrite
+#                    helm/nan-benchmarks-agent/values.yaml `image.tag`, commit,
+#                    push to main. ArgoCD picks up the change on next sync.
+#
+# Required GitHub Secrets on helmcode/nan-benchmarks-agent:
+#   - GHCR_PAT       — PAT with `write:packages` scope (push image).
+#   - NAN_DEVOPS_PAT — PAT with `repo` scope on helmcode/nan-devops
+#                      (cross-repo bump of values.yaml).
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  check:
+    name: Check VERSION change
+    runs-on: ubuntu-latest
+    outputs:
+      version_changed: ${{ steps.diff.outputs.version_changed }}
+      version: ${{ steps.diff.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Detect VERSION change
+        id: diff
+        run: |
+          version=$(cat VERSION | tr -d '[:space:]')
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+          if git diff HEAD~1 --name-only | grep -q '^VERSION$'; then
+            echo "version_changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "version_changed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Test
+        run: go test ./...
+
+  build-push:
+    name: Build & Push image
+    needs: [check, test]
+    runs-on: ubuntu-latest
+    outputs:
+      image_tag: ${{ steps.tag.outputs.image_tag }}
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve image tags
+        id: tag
+        run: |
+          tags="${IMAGE}:${{ github.sha }}"
+          if [ "${{ needs.check.outputs.version_changed }}" = "true" ]; then
+            tags="${tags}"$'\n'"${IMAGE}:latest"
+            tags="${tags}"$'\n'"${IMAGE}:v${{ needs.check.outputs.version }}"
+            echo "image_tag=v${{ needs.check.outputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "image_tag=${{ github.sha }}" >> "$GITHUB_OUTPUT"
+          fi
+          {
+            echo "tags<<EOF"
+            echo "${tags}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_PAT }}
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.tag.outputs.tags }}
+
+  bump-values:
+    name: Bump nan-devops values.yaml
+    needs: [build-push]
+    runs-on: ubuntu-latest
+
+    # Cross-repo writes use NAN_DEVOPS_PAT explicitly. The default GITHUB_TOKEN
+    # is read-only here so a misuse cannot escalate.
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout helmcode/nan-devops
+        uses: actions/checkout@v4
+        with:
+          repository: helmcode/nan-devops
+          ref: main
+          token: ${{ secrets.NAN_DEVOPS_PAT }}
+          path: nan-devops
+
+      - name: Install yq
+        run: |
+          sudo wget -qO /usr/local/bin/yq \
+            https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+
+      - name: Bump image.tag
+        run: |
+          cd nan-devops
+          yq -i ".image.tag = \"${{ needs.build-push.outputs.image_tag }}\"" \
+            helm/nan-benchmarks-agent/values.yaml
+
+      - name: Commit & push
+        run: |
+          cd nan-devops
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git config user.name  "github-actions[bot]"
+          if git diff --quiet; then
+            echo "No changes to commit (tag unchanged)."
+            exit 0
+          fi
+          git add helm/nan-benchmarks-agent/values.yaml
+          git commit -m "chore(nan-benchmarks-agent): bump image to ${{ needs.build-push.outputs.image_tag }}"
+          git push origin main

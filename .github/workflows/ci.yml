@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+# Minimal default token scope; cross-repo checkout uses NAN_DEVOPS_PAT explicitly.
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: go build ./...
+
+      - name: Test
+        run: go test ./...
+
+  helm-lint:
+    name: Helm chart lint
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout nan-devops (chart repo)
+        uses: actions/checkout@v4
+        with:
+          repository: helmcode/nan-devops
+          ref: main
+          token: ${{ secrets.NAN_DEVOPS_PAT }}
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.0
+
+      - name: helm lint
+        run: helm lint helm/nan-benchmarks-agent

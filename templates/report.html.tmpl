@@ -1,0 +1,387 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>{{ .Title }}</title>
+<style>
+  /* ── Page setup ──
+     The @page margin is set to 0 so Chromium does NOT leave a white frame
+     around our dark body background when printing to PDF. Inner padding
+     lives on `.page` instead, so each page in the PDF is fully tinted.       */
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body {
+    background: #0b0b10; color: #e8e8ee;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  body {
+    font-family: -apple-system, "SF Pro Text", Inter, system-ui, sans-serif;
+    font-size: 10.5pt; line-height: 1.6;
+    margin: 0; padding: 0;
+  }
+  code, pre, .mono, table { font-family: "JetBrains Mono", "Fira Code", ui-monospace, monospace; }
+
+  /* ── Layout ──
+     `.page` is one printed sheet. We give it the page's full A4 height so
+     the dark background extends to the bottom edge even when the section
+     content is short, and put the visual margin as padding instead of
+     @page margin.                                                            */
+  .page {
+    padding: 1.4cm 1.6cm;
+    min-height: 29.7cm;
+    break-after: page;
+    background: #0b0b10;
+  }
+  .page:last-child { break-after: auto; }
+
+  /* ── Header (cover) ── */
+  .cover-header { display: flex; align-items: baseline; justify-content: space-between; border-bottom: 1px solid #2a2a35; padding-bottom: 8pt; margin-bottom: 12pt; }
+  .cover-header h1 { margin: 0; font-size: 18pt; color: #fff; letter-spacing: -0.01em; }
+  .cover-header .meta { font-size: 9pt; color: #8a8aa0; text-align: right; }
+  .accent { color: #b095ff; }
+
+  /* ── Headings ── */
+  h2 { font-size: 13pt; color: #fff; margin: 18pt 0 8pt; border-bottom: 1px solid #2a2a35; padding-bottom: 4pt; }
+  h3 { font-size: 11pt; color: #c9c9d6; margin: 14pt 0 6pt; }
+
+  /* ── Tables ── */
+  table { width: 100%; border-collapse: collapse; font-size: 8.5pt; margin: 8pt 0 12pt; }
+  th, td { padding: 5pt 8pt; text-align: left; border-bottom: 1px solid #1f1f29; }
+  th { color: #b095ff; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em; font-size: 7.5pt; background: #14141c; }
+  tr:hover td { background: #11111a; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.sum td { background: #14141c; font-weight: 600; color: #fff; }
+
+  /* ── Inline bar (CSS sparkline) ── */
+  .bar { display: inline-block; height: 6pt; background: #b095ff; border-radius: 1pt; vertical-align: middle; margin-right: 4pt; }
+  .bar.warn { background: #ffaf60; }
+  .bar.bad { background: #ff5d6c; }
+
+  /* ── Markdown rendering (LLM output is dropped into .md) ──
+     The LLM emits its Capacity Planning block as a GFM table, plus the usual
+     mix of headings, paragraphs, bullets, bold and inline code. These rules
+     style each of those primitives so the analysis page reads cleanly in the
+     final PDF.                                                              */
+  .md { font-size: 10pt; line-height: 1.65; }
+  .md h2 { margin-top: 18pt; margin-bottom: 8pt; }
+  .md h3 { margin-top: 14pt; margin-bottom: 6pt; font-size: 10.5pt; }
+  .md p { margin: 8pt 0; }
+  .md ul, .md ol { margin: 8pt 0; padding-left: 20pt; }
+  .md li { margin: 5pt 0; }
+  .md li > p { margin: 2pt 0; }
+  .md strong { color: #fff; }
+  .md code { background: #1a1a24; padding: 1pt 4pt; border-radius: 2pt; font-size: 9pt; color: #b095ff; }
+  /* Tables inside the LLM narrative: same dark palette as the data tables
+     below, slightly looser so prose-driven tables breathe a bit more.       */
+  .md table {
+    width: 100%; border-collapse: collapse;
+    font-size: 9pt; margin: 10pt 0 14pt;
+    border: 1px solid #1f1f29;
+    line-height: 1.45;
+  }
+  .md th, .md td {
+    padding: 6pt 10pt;
+    border-bottom: 1px solid #1f1f29;
+    border-right: 1px solid #1f1f29;
+    text-align: left; vertical-align: top;
+  }
+  .md th {
+    color: #b095ff; font-weight: 600;
+    background: #14141c;
+    text-transform: none; letter-spacing: 0; font-size: 8.5pt;
+  }
+  .md th:last-child, .md td:last-child { border-right: none; }
+  .md tr:last-child td { border-bottom: none; }
+  /* Right-align cells that look numeric (markdown alignment cues are lost in
+     goldmark's default renderer, so we lean on tabular-nums + class-less
+     numeric heuristics — the eye gets a clean column even without :is()).   */
+  .md td { font-variant-numeric: tabular-nums; }
+  .md hr {
+    border: 0; border-top: 1px solid #2a2a35; margin: 8pt 0;
+  }
+
+  /* ── Deltas ── */
+  .delta-good { color: #5ad97a; }
+  .delta-bad  { color: #ff7e85; }
+  .delta-flat { color: #8a8aa0; }
+
+  /* ── Footer ── */
+  .footer { font-size: 7.5pt; color: #5a5a70; border-top: 1px solid #1f1f29; padding-top: 4pt; margin-top: 8pt; }
+  .badge { display: inline-block; padding: 1pt 5pt; border: 1px solid #2a2a35; border-radius: 3pt; font-size: 7.5pt; color: #c9c9d6; margin-right: 4pt; }
+  .badge.qwen { color: #b095ff; border-color: #5a4880; }
+  .badge.gemma { color: #ffaf60; border-color: #80623a; }
+  .badge.embed { color: #5ad9d9; border-color: #3a7080; }
+</style>
+</head>
+<body>
+
+<!-- ───────────── Page 1 — Cover + Analysis ───────────── -->
+<section class="page">
+  <div class="cover-header">
+    <h1>Cluster NaN — <span class="accent">Informe de rendimiento</span></h1>
+    <div class="meta">
+      <div><strong>{{ .ModeUpper }}</strong> • ventana {{ .Window }}</div>
+      <div>Generado {{ .GeneratedAtPretty }} UTC</div>
+      <div>Periodo finalizado {{ .PeriodEndPretty }}</div>
+    </div>
+  </div>
+
+  <div style="display:flex; gap:8pt; margin-bottom:10pt;">
+    <span class="badge qwen">{{ .QwenCount }} × qwen3.6</span>
+    {{- if gt .GemmaCount 0 }}<span class="badge gemma">{{ .GemmaCount }} × gemma4</span>{{ end }}
+    {{- if gt .EmbCount 0 }}<span class="badge embed">{{ .EmbCount }} × embedding</span>{{ end }}
+    <span class="badge">{{ printf "%.0f req/min" .Current.Aggregates.QwenReqPerMin }} en qwen3.6</span>
+    <span class="badge">{{ printf "TTFT p50 %.2fs" .Current.Aggregates.QwenTTFTP50Avg }}</span>
+    <span class="badge">{{ printf "GPU util %.0f%%" .Current.Aggregates.QwenGPUUtilAvg }}</span>
+  </div>
+
+  <div class="md">
+    {{ .AnalysisHTML }}
+  </div>
+
+  <div class="footer">
+    nan-benchmarks-agent v{{ .AgentVersion }} • narrativa automatizada generada por el modelo {{ .Model }}.
+    Los números proceden directamente de VictoriaMetrics; la interpretación la genera el LLM y debe revisarse.
+  </div>
+</section>
+
+<!-- ───────────── Page 2 — Topology ───────────── -->
+<section class="page">
+  <h2>Topología del cluster</h2>
+  <table>
+    <thead><tr>
+      <th>Job</th><th>Host</th><th>Familia</th><th>Modelo</th><th>Job de hardware</th>
+    </tr></thead>
+    <tbody>
+    {{- range .Topology.Nodes }}
+      <tr>
+        <td>{{ .Job }}</td>
+        <td>{{ .Hostname }}</td>
+        <td><span class="badge {{ familyClass .Family }}">{{ .Family }}</span></td>
+        <td>{{ .Model }}</td>
+        <td>{{ .NvidiaJob }}</td>
+      </tr>
+    {{- end }}
+    </tbody>
+  </table>
+</section>
+
+<!-- ───────────── Page 3 — Traffic ───────────── -->
+<section class="page">
+  <h2>Volumen de tráfico — ventana actual ({{ .Window }})</h2>
+
+  <h3>Flota Qwen3.6</h3>
+  <table>
+    <thead><tr>
+      <th>Host</th>
+      <th class="num">Solicitudes</th>
+      <th class="num">req/min</th>
+      <th class="num">stop %</th>
+      <th class="num">length %</th>
+      <th class="num">Preempt</th>
+    </tr></thead>
+    <tbody>
+    {{- range .QwenNodes }}
+      {{- $r := index $.Current.Traffic.Success .Job }}
+      {{- $stop := index $.Current.Traffic.Stop .Job }}
+      {{- $len := index $.Current.Traffic.Length .Job }}
+      {{- $pre := index $.Current.Traffic.Preemptions .Job }}
+      <tr>
+        <td>{{ .Hostname }}</td>
+        <td class="num">{{ humanInt $r }}</td>
+        <td class="num">{{ printf "%.1f" (divFloat $r $.WindowMinutes) }}</td>
+        <td class="num">{{ printf "%.1f%%" (pctOf $stop $r) }}</td>
+        <td class="num">{{ printf "%.1f%%" (pctOf $len $r) }}</td>
+        <td class="num">{{ printf "%.0f" $pre }}</td>
+      </tr>
+    {{- end }}
+      <tr class="sum">
+        <td>TOTAL qwen3.6</td>
+        <td class="num">{{ humanInt .Current.Aggregates.QwenReqTotal }}</td>
+        <td class="num">{{ printf "%.1f" .Current.Aggregates.QwenReqPerMin }}</td>
+        <td class="num">—</td><td class="num">—</td>
+        <td class="num">{{ printf "%.0f" .Current.Aggregates.PreemptionsTotal }}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  {{- if or .GemmaNodes .EmbNodes }}
+  <h3>Otros backends</h3>
+  <table>
+    <thead><tr>
+      <th>Host</th><th>Familia</th>
+      <th class="num">Solicitudes</th><th class="num">req/min</th>
+    </tr></thead>
+    <tbody>
+      {{- range .GemmaNodes }}
+        {{- $r := index $.Current.Traffic.Success .Job }}
+        <tr>
+          <td>{{ .Hostname }}</td>
+          <td><span class="badge gemma">{{ .Family }}</span></td>
+          <td class="num">{{ humanInt $r }}</td>
+          <td class="num">{{ printf "%.1f" (divFloat $r $.WindowMinutes) }}</td>
+        </tr>
+      {{- end }}
+      {{- range .EmbNodes }}
+        {{- $r := index $.Current.Traffic.Success .Job }}
+        <tr>
+          <td>{{ .Hostname }}</td>
+          <td><span class="badge embed">{{ .Family }}</span></td>
+          <td class="num">{{ humanInt $r }}</td>
+          <td class="num">{{ printf "%.1f" (divFloat $r $.WindowMinutes) }}</td>
+        </tr>
+      {{- end }}
+    </tbody>
+  </table>
+  {{- end }}
+
+  <h3>Tokens procesados (suma flota qwen3.6)</h3>
+  <table>
+    <thead><tr><th>Tipo</th><th class="num">Tokens</th><th class="num">promedio / req</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>Prompt</td>
+        <td class="num">{{ humanInt .Current.Aggregates.QwenPromptTokens }}</td>
+        <td class="num">{{ humanInt (divFloat .Current.Aggregates.QwenPromptTokens .Current.Aggregates.QwenReqTotal) }}</td>
+      </tr>
+      <tr>
+        <td>Generación</td>
+        <td class="num">{{ humanInt .Current.Aggregates.QwenGenTokens }}</td>
+        <td class="num">{{ humanInt (divFloat .Current.Aggregates.QwenGenTokens .Current.Aggregates.QwenReqTotal) }}</td>
+      </tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- ───────────── Page 4 — Latency ───────────── -->
+<section class="page">
+  <h2>Percentiles de latencia</h2>
+
+  <h3>Time to first token (TTFT)</h3>
+  <table>
+    <thead><tr><th>Host</th><th class="num">p50</th><th class="num">p95</th><th class="num">p99</th></tr></thead>
+    <tbody>
+    {{- range .AllVllmNodes }}
+      <tr>
+        <td>{{ .Hostname }}</td>
+        <td class="num">{{ printf "%.2fs" (index $.Current.TTFT.P50 .Job) }}</td>
+        <td class="num">{{ printf "%.2fs" (index $.Current.TTFT.P95 .Job) }}</td>
+        <td class="num">{{ printf "%.2fs" (index $.Current.TTFT.P99 .Job) }}</td>
+      </tr>
+    {{- end }}
+    </tbody>
+  </table>
+
+  <h3>Time per output token (TPOT)</h3>
+  <table>
+    <thead><tr><th>Host</th><th class="num">p50</th><th class="num">p95</th><th class="num">p99</th></tr></thead>
+    <tbody>
+    {{- range .GenerationNodes }}
+      <tr>
+        <td>{{ .Hostname }}</td>
+        <td class="num">{{ tpotMs (index $.Current.TPOT.P50 .Job) }}</td>
+        <td class="num">{{ tpotMs (index $.Current.TPOT.P95 .Job) }}</td>
+        <td class="num">{{ tpotMs (index $.Current.TPOT.P99 .Job) }}</td>
+      </tr>
+    {{- end }}
+    </tbody>
+  </table>
+
+  <h3>End-to-end (E2E)</h3>
+  <table>
+    <thead><tr><th>Host</th><th class="num">p50</th><th class="num">p95</th><th class="num">p99</th></tr></thead>
+    <tbody>
+    {{- range .GenerationNodes }}
+      <tr>
+        <td>{{ .Hostname }}</td>
+        <td class="num">{{ printf "%.2fs" (index $.Current.E2E.P50 .Job) }}</td>
+        <td class="num">{{ printf "%.2fs" (index $.Current.E2E.P95 .Job) }}</td>
+        <td class="num">{{ printf "%.2fs" (index $.Current.E2E.P99 .Job) }}</td>
+      </tr>
+    {{- end }}
+    </tbody>
+  </table>
+</section>
+
+<!-- ───────────── Page 5 — Cache & KV + Hardware ───────────── -->
+<section class="page">
+  <h2>Caché &amp; KV</h2>
+  <table>
+    <thead><tr>
+      <th>Host</th>
+      <th class="num">Prefix hit %</th>
+      <th class="num">KV avg %</th>
+      <th class="num">KV max %</th>
+      <th class="num">Preemptions</th>
+    </tr></thead>
+    <tbody>
+    {{- range .GenerationNodes }}
+      <tr>
+        <td>{{ .Hostname }}</td>
+        <td class="num">{{ printf "%.1f%%" (index $.Current.Cache.HitRate .Job) }}</td>
+        <td class="num">{{ printf "%.1f%%" (index $.Current.Cache.KVAvg .Job) }}</td>
+        <td class="num">{{ printf "%.1f%%" (index $.Current.Cache.KVMax .Job) }}</td>
+        <td class="num">{{ printf "%.0f" (index $.Current.Traffic.Preemptions .Job) }}</td>
+      </tr>
+    {{- end }}
+    </tbody>
+  </table>
+
+  <h2>Hardware</h2>
+  <table>
+    <thead><tr>
+      <th>Host</th>
+      <th class="num">GPU util</th>
+      <th class="num">Temp media / máx</th>
+      <th class="num">Potencia media / máx</th>
+      <th class="num">VRAM</th>
+      <th class="num">SW pwr-cap %</th>
+    </tr></thead>
+    <tbody>
+    {{- range .AllVllmNodes }}
+      <tr>
+        <td>{{ .Hostname }}</td>
+        <td class="num">{{ printf "%.1f%%" (index $.Current.Hardware.GPUUtilAvg .NvidiaJob) }}</td>
+        <td class="num">{{ printf "%.0f° / %.0f°" (index $.Current.Hardware.GPUTempAvg .NvidiaJob) (index $.Current.Hardware.GPUTempMax .NvidiaJob) }}</td>
+        <td class="num">{{ printf "%.0fW / %.0fW" (index $.Current.Hardware.PowerAvg .NvidiaJob) (index $.Current.Hardware.PowerMax .NvidiaJob) }}</td>
+        <td class="num">{{ printf "%.1f / %.0f GB" (index $.Current.Hardware.VRAMUsedAvg .NvidiaJob) (index $.Current.Hardware.VRAMTotal .NvidiaJob) }}</td>
+        <td class="num">{{ printf "%.1f%%" (index $.Current.Hardware.PwrCapPct .NvidiaJob) }}</td>
+      </tr>
+    {{- end }}
+    </tbody>
+  </table>
+</section>
+
+<!-- ───────────── Page 6 — Comparison vs previous window ───────────── -->
+{{ if .HasComparison }}
+<section class="page">
+  <h2>vs ventana anterior ({{ .Window }} finalizada {{ .PrevEndPretty }})</h2>
+  <table>
+    <thead><tr>
+      <th>Métrica</th>
+      <th class="num">Actual</th>
+      <th class="num">Anterior</th>
+      <th class="num">Δ</th>
+    </tr></thead>
+    <tbody>
+      {{ range .Comparisons }}
+        <tr>
+          <td>{{ .Label }}</td>
+          <td class="num">{{ .Current }}</td>
+          <td class="num">{{ .Previous }}</td>
+          <td class="num {{ .DeltaClass }}">{{ .DeltaPretty }}</td>
+        </tr>
+      {{ end }}
+    </tbody>
+  </table>
+  <div class="footer">
+    Δ se calcula como (actual − anterior) / anterior × 100. En métricas en las que
+    "más bajo es mejor" (latencias, power-cap throttle, preemptions) el código de
+    color se invierte: un +X% en esas filas se muestra como regresión.
+  </div>
+</section>
+{{ end }}
+
+</body>
+</html>
