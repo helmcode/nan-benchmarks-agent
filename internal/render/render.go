@@ -572,8 +572,11 @@ func chartLabel(t time.Time, step time.Duration) string {
 // pointsToSeries converts vmclient.Points into the Chart.js-friendly
 // (labels, data) pair. NaN/Inf are dropped silently — Chart.js draws a gap.
 func pointsToSeries(pts []vmclient.Point, step time.Duration) chartSeries {
+	// Return non-nil slices even when empty so the JSON the template hands to
+	// Chart.js is `{"labels":[],"data":[]}` rather than `null` — the latter
+	// makes the chart-init script throw and breaks PDF rendering.
 	if len(pts) == 0 {
-		return chartSeries{}
+		return chartSeries{Labels: []string{}, Data: []float64{}}
 	}
 	labels := make([]string, 0, len(pts))
 	values := make([]float64, 0, len(pts))
@@ -600,7 +603,7 @@ func pointsToSeriesMs(pts []vmclient.Point, step time.Duration) chartSeries {
 
 func buildChartBundle(pm *report.PeriodMetrics) chartBundle {
 	if pm == nil || pm.Series == nil {
-		return chartBundle{}
+		return emptyChartBundle()
 	}
 	ts := pm.Series
 	step := ts.Step
@@ -621,6 +624,31 @@ func buildChartBundle(pm *report.PeriodMetrics) chartBundle {
 		LiteLLMOverheadP95: pointsToSeriesMs(ts.LiteLLMOverheadP95, step),
 		LiteLLMApiLatP50:   pointsToSeries(ts.LiteLLMApiLatP50, step),
 		LiteLLMApiLatP95:   pointsToSeries(ts.LiteLLMApiLatP95, step),
+	}
+}
+
+// emptyChartBundle is returned when the time-series collection failed (e.g.
+// a transient vmselect blip). Every field is a zero-length but non-nil
+// chartSeries so the template's Chart.js init script doesn't trip over nulls.
+func emptyChartBundle() chartBundle {
+	empty := chartSeries{Labels: []string{}, Data: []float64{}}
+	return chartBundle{
+		ReqPerMin:          empty,
+		TTFTp50:            empty,
+		TTFTp95:            empty,
+		TTFTp99:            empty,
+		TPOTp50:            empty,
+		TPOTp95:            empty,
+		E2Ep50:             empty,
+		E2Ep95:             empty,
+		PrefixHitPct:       empty,
+		KVAvgPct:           empty,
+		GPUUtilPct:         empty,
+		PwrCapPct:          empty,
+		LiteLLMOverheadP50: empty,
+		LiteLLMOverheadP95: empty,
+		LiteLLMApiLatP50:   empty,
+		LiteLLMApiLatP95:   empty,
 	}
 }
 
