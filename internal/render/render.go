@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"log/slog"
 	"math"
 	"net"
 	"net/http"
@@ -18,6 +19,7 @@ import (
 	"time"
 
 	"github.com/chromedp/cdproto/page"
+	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"
@@ -133,11 +135,35 @@ func htmlToPDF(ctx context.Context, htmlBytes []byte) ([]byte, error) {
 	tabCtx, cancel := chromedp.NewContext(allocCtx)
 	defer cancel()
 
+	// Surface in-page console messages and uncaught exceptions to the agent
+	// logs. Without this, a JS error in the chart-init script is invisible —
+	// the job just times out waiting for __chartsReady with no breadcrumb.
+	chromedp.ListenTarget(tabCtx, func(ev interface{}) {
+		switch e := ev.(type) {
+		case *runtime.EventConsoleAPICalled:
+			parts := make([]string, 0, len(e.Args))
+			for _, a := range e.Args {
+				if a.Value != nil {
+					parts = append(parts, string(a.Value))
+				} else if a.Description != "" {
+					parts = append(parts, a.Description)
+				}
+			}
+			slog.Warn("page console", "type", string(e.Type), "msg", strings.Join(parts, " "))
+		case *runtime.EventExceptionThrown:
+			slog.Warn("page exception", "text", e.ExceptionDetails.Text,
+				"url", e.ExceptionDetails.URL, "line", e.ExceptionDetails.LineNumber)
+		}
+	})
+
 	timeoutCtx, cancel := context.WithTimeout(tabCtx, 90*time.Second)
 	defer cancel()
 
 	var pdf []byte
 	err = chromedp.Run(timeoutCtx,
+		// Enable the Runtime domain so the ListenTarget above receives console
+		// and exception events. Without Enable() the listener stays silent.
+		runtime.Enable(),
 		chromedp.Navigate(url),
 		chromedp.WaitReady("body", chromedp.ByQuery),
 		// Poll the page-side sentinel set by the chart-init script. Without

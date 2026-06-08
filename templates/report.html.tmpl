@@ -481,6 +481,14 @@
 {{ end }}
 
 <!-- ═════════════════ Chart.js + chart-init ═════════════════ -->
+<script>
+  // Hard fallback: signal ready 10s into the page lifetime no matter what
+  // happens to the chart-init script. Chart.js paints synchronously in well
+  // under 10s when it works; if anything (load, parse, runtime) goes wrong,
+  // this still unblocks chromedp before its 30s polling deadline so the PDF
+  // ships with empty canvases instead of the whole report being lost.
+  setTimeout(function () { window.__chartsReady = true; }, 10000);
+</script>
 <script>{{ .ChartJS }}</script>
 <script>
 (function () {
